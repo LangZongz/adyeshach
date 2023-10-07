@@ -44,7 +44,7 @@ jobs:
         id: build_4
         if: steps.build_3.outcome == 'failure'
         run: ./gradlew build
-            - name: Set outputs
+      - name: Set outputs
         id: short_sha
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       - name: Publish Release
