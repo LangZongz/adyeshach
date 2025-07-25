@@ -5,24 +5,25 @@ import ink.ptms.adyeshach.core.AdyeshachSettings
 import ink.ptms.adyeshach.core.bukkit.data.EntityPosition
 import ink.ptms.adyeshach.core.entity.StandardTags
 import ink.ptms.adyeshach.core.entity.TickService
+import ink.ptms.adyeshach.core.entity.manager.PlayerManager
 import ink.ptms.adyeshach.core.entity.path.PathFinderHandler
 import ink.ptms.adyeshach.core.entity.path.ResultNavigation
 import ink.ptms.adyeshach.core.util.encodePos
 import ink.ptms.adyeshach.core.util.ifloor
 import ink.ptms.adyeshach.core.util.plus
 import ink.ptms.adyeshach.impl.ServerTours
+import ink.ptms.adyeshach.impl.manager.DefaultManagerHandler.playersInGameTick
 import ink.ptms.adyeshach.impl.util.ChunkAccess
+import org.bukkit.entity.Player
 import org.bukkit.util.Vector
 import taboolib.common.util.random
 import taboolib.common5.clong
 import java.util.concurrent.TimeUnit
 import kotlin.math.absoluteValue
-import kotlin.math.floor
-import kotlin.math.roundToInt
 
 /** 所在区块是否加载 */
 fun DefaultEntityInstance.isChunkLoaded(): Boolean {
-    return ChunkAccess.getChunkAccess(world).isChunkLoaded(floor(x).toInt() shr 4, floor(z).roundToInt() shr 4)
+    return ChunkAccess.getChunkAccess(world).isChunkLoaded(chunkX, chunkZ)
 }
 
 /** 更新管理器标签 */
@@ -78,31 +79,41 @@ fun DefaultEntityInstance.updateMoveFrames() {
  * 确保客户端显示实体正常
  *
  * 大量用户反馈的 NPC 概率性不可见问题，根本原因在于这个逻辑写垃圾
- * 尝试性修复 - 2023/12/29：玩家在可见范围内呆上一个检查周期后才会显示实体，并缩短检查周期 (5s -> 2s)
+ * 尝试性修复 - 2023/12/29: 玩家在可见范围内呆上一个检查周期后才会显示实体，并缩短检查周期 (5s -> 2s)
+ * 尝试性修复 - 2024/02/27: 基于原版 PlayerChunkMap 的区块可见性决定实体可见性
  */
 fun DefaultEntityInstance.handleTracker() {
-    // 每 2 秒检查一次
+    // 检查间隔
     if (viewPlayers.visibleRefreshLocker.hasNext()) {
-        // 获取不可视的玩家
-        viewPlayers.getOutsidePlayers().forEach { player ->
-            // 属否在可视范围内
-            if (isInVisibleDistance(player)) {
-                if (tag.containsKey("PREPARE_VIEW:${player.name}")) {
-                    if (visible(player, true)) {
-                        viewPlayers.visible += player.name
-                        tag.remove("PREPARE_VIEW:${player.name}")
-                    }
-                } else {
-                    tag["PREPARE_VIEW:${player.name}"] = true
-                }
-            } else if (tag.containsKey("PREPARE_VIEW:${player.name}")) {
-                tag.remove("PREPARE_VIEW:${player.name}")
-            }
+        // 同步到载具位置
+        val vehicle = getVehicle()
+        if (vehicle != null) {
+            position = vehicle.position.clone()
+            clientPosition = vehicle.position.clone()
         }
-        // 销毁不在可视范围内的实体
-        viewPlayers.getViewPlayers { !isInVisibleDistance(it) }.forEach { player ->
-            if (!ServerTours.isRoutePlaying(player) && visible(player, false)) {
-                viewPlayers.visible -= player.name
+        // 同步可见状态
+        val entityManager = manager
+        if (entityManager is PlayerManager) {
+            handleTracker(entityManager.owner)
+        } else {
+            playersInGameTick.forEach { handleTracker(it) }
+        }
+    }
+}
+
+private fun DefaultEntityInstance.handleTracker(player: Player) {
+    // 是观察者
+    if (player.name in viewPlayers.viewers) {
+        // 是可见的观察者
+        if (player.name in viewPlayers.visible) {
+            // 销毁不在可视范围内的实体
+            if (!isInVisibleDistance(player) && !ServerTours.isRoutePlaying(player)) {
+                visible(player, false)
+            }
+        } else {
+            // 属否在可视范围内 && 所在区块是否可见 && 显示实体
+            if (isInVisibleDistance(player) && Adyeshach.api().getMinecraftAPI().getHelper().isChunkVisible(player, chunkX, chunkZ)) {
+                visible(player, true)
             }
         }
     }
@@ -171,7 +182,7 @@ fun DefaultEntityInstance.handleMove() {
             }
             // 调试模式下显示路径
             if (AdyeshachSettings.debug) {
-                world.spawnParticle(org.bukkit.Particle.SOUL_FIRE_FLAME, next.x, next.y, next.z, 2, 0.0, 0.0, 0.0, 0.0)
+                world.spawnParticle(org.bukkit.Particle.VILLAGER_HAPPY, next.x, next.y, next.z, 2, 0.0, 0.0, 0.0, 0.0)
             }
         }
     }
@@ -218,15 +229,6 @@ fun DefaultEntityInstance.syncPosition() {
         // 是否需要更新视角
         if (updateRotation) {
             operator.updateEntityLook(getVisiblePlayers(), index, yaw, pitch, true)
-        }
-        // 是否需要同步到载具位置
-        if (vehicleSync + TimeUnit.SECONDS.toMillis(10) < System.currentTimeMillis()) {
-            vehicleSync = System.currentTimeMillis()
-            // 获取载具
-            val vehicle = getVehicle()
-            if (vehicle != null) {
-                position = vehicle.position
-            }
         }
     } else {
         // 是否需要更新位置

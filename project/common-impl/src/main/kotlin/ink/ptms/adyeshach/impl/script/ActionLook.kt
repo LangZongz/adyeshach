@@ -1,13 +1,14 @@
 package ink.ptms.adyeshach.impl.script
 
 import ink.ptms.adyeshach.core.util.errorBy
+import ink.ptms.adyeshach.core.util.submitRepeat
 import ink.ptms.adyeshach.impl.getEntities
 import ink.ptms.adyeshach.impl.getManager
 import ink.ptms.adyeshach.impl.isEntitySelected
 import org.bukkit.Location
-import taboolib.common.platform.function.submit
-import taboolib.common.platform.function.submitAsync
-import taboolib.module.kether.*
+import taboolib.module.kether.KetherParser
+import taboolib.module.kether.combinationParser
+import taboolib.module.kether.script
 
 @KetherParser(["look"], namespace = "adyeshach", shared = true)
 private fun actionLook() = combinationParser {
@@ -23,20 +24,16 @@ private fun actionLook() = combinationParser {
             if (script.getManager() == null || !script.isEntitySelected()) {
                 errorBy("error-no-manager-or-entity-selected")
             }
+            val entities = script.getEntities()
             if (smooth != null) {
-                var i = 0
-                submit(period = 1) {
-                    if (i++ < 5) {
-                        script.getEntities().forEach { e ->
-                            val lookAt = to as? Location ?: Location(e.world, x ?: e.x, y ?: e.y, z ?: e.z)
-                            e.controllerLookAt(lookAt.x, lookAt.y, lookAt.z, 35f, 40f)
-                        }
-                    } else {
-                        cancel()
+                submitRepeat(5) {
+                    entities.forEach { e ->
+                        val lookAt = to as? Location ?: Location(e.world, x ?: e.x, y ?: e.y, z ?: e.z)
+                        e.controllerLookAt(lookAt.x, lookAt.y, lookAt.z, 35f, 40f)
                     }
                 }
             } else {
-                script.getEntities().forEach { e -> e.setHeadRotation(to as? Location ?: Location(e.world, x ?: e.x, y ?: e.y, z ?: e.z)) }
+                entities.forEach { e -> e.setHeadRotation(to as? Location ?: Location(e.world, x ?: e.x, y ?: e.y, z ?: e.z)) }
             }
         }
     }

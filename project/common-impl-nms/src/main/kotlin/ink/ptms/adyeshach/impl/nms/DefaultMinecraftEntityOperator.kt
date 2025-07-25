@@ -1,14 +1,10 @@
 package ink.ptms.adyeshach.impl.nms
 
 import com.mojang.datafixers.util.Pair
-import ink.ptms.adyeshach.api.dataserializer.createDataSerializer
-import ink.ptms.adyeshach.core.Adyeshach
-import ink.ptms.adyeshach.core.MinecraftEntityOperator
-import ink.ptms.adyeshach.core.MinecraftMeta
-import ink.ptms.adyeshach.core.MinecraftPacketHandler
+import taboolib.module.nms.createDataSerializer
+import ink.ptms.adyeshach.core.*
 import ink.ptms.adyeshach.core.bukkit.BukkitAnimation
 import ink.ptms.adyeshach.core.util.ifloor
-import ink.ptms.adyeshach.impl.nmsj17.NMSJ17
 import org.bukkit.Location
 import org.bukkit.entity.Player
 import org.bukkit.inventory.EquipmentSlot
@@ -32,8 +28,11 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
     val packetHandler: MinecraftPacketHandler
         get() = Adyeshach.api().getMinecraftAPI().getPacketHandler()
 
+    val metaHandler: MinecraftEntityMetadataHandler
+        get() = Adyeshach.api().getMinecraftAPI().getEntityMetadataHandler()
+
     override fun destroyEntity(player: List<Player>, entityId: Int) {
-        packetHandler.sendPacket(player, NMSPacketPlayOutEntityDestroy(entityId))
+        packetHandler.sendPacket(player, NMS16PacketPlayOutEntityDestroy(entityId))
     }
 
     override fun teleportEntity(player: List<Player>, entityId: Int, location: Location, onGround: Boolean) {
@@ -55,9 +54,9 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
                     writeByte(yaw)
                     writeByte(pitch)
                     writeBoolean(onGround)
-                }.toNMS() as NMS9PacketDataSerializer)
+                }.build() as NMS9PacketDataSerializer)
             }
-            // 1.17, 1.18, 1.19, 1.12
+            // 1.17, 1.18, 1.19, 1.20
             // 使用带有 DataSerializer 的构造函数生成数据包
             9, 10, 11, 12 -> NMSPacketPlayOutEntityTeleport(createDataSerializer {
                 writeVarInt(entityId)
@@ -67,12 +66,16 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
                 writeByte(yaw)
                 writeByte(pitch)
                 writeBoolean(onGround)
-            }.toNMS() as NMSPacketDataSerializer)
+            }.build() as NMSPacketDataSerializer)
+            // 1.21
+            13 -> error("还不支持")
             // 不支持
             else -> error("Unsupported version.")
         }
         // 发送数据包
         packetHandler.sendPacket(player, packet)
+        // 同步头部朝向
+        updateHeadRotation(player, entityId, location.yaw)
     }
 
     override fun updateEntityLook(player: List<Player>, entityId: Int, yaw: Float, pitch: Float, onGround: Boolean) {
@@ -136,13 +139,13 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
             packetHandler.sendPacket(player, NMSPacketPlayOutEntityHeadRotation(createDataSerializer {
                 writeVarInt(entityId)
                 writeByte(ifloor(yf * 256.0 / 360.0).toByte())
-            }.toNMS() as NMSPacketDataSerializer))
+            }.build() as NMSPacketDataSerializer))
         } else {
             packetHandler.sendPacket(player, NMS16PacketPlayOutEntityHeadRotation().also {
                 it.a(createDataSerializer {
                     writeVarInt(entityId)
                     writeByte(ifloor(yf * 256.0 / 360.0).toByte())
-                }.toNMS() as NMS16PacketDataSerializer)
+                }.build() as NMS16PacketDataSerializer)
             })
         }
     }
@@ -172,34 +175,19 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
             packetHandler.sendPacket(player, NMSPacketPlayOutMount(createDataSerializer {
                 writeVarInt(entityId)
                 writeVarIntArray(passengers)
-            }.toNMS() as NMSPacketDataSerializer))
+            }.build() as NMSPacketDataSerializer))
         } else {
             packetHandler.sendPacket(player, NMS16PacketPlayOutMount().also {
                 it.a(createDataSerializer {
                     writeVarInt(entityId)
                     writeVarIntArray(passengers)
-                }.toNMS() as NMS16PacketDataSerializer)
+                }.build() as NMS16PacketDataSerializer)
             })
         }
     }
 
     override fun updateEntityMetadata(player: List<Player>, entityId: Int, metadata: List<MinecraftMeta>) {
-        // 1.19.3 变更为 record 类型，因此无法兼容之前的写法
-        if (majorLegacy >= 11903) {
-            packetHandler.sendPacket(player, NMSJ17.instance.createPacketPlayOutEntityMetadata(entityId, metadata))
-        } else if (isUniversal) {
-            packetHandler.sendPacket(player, NMSPacketPlayOutEntityMetadata(createDataSerializer {
-                writeVarInt(entityId)
-                writeMetadata(metadata)
-            }.toNMS() as NMSPacketDataSerializer))
-        } else {
-            packetHandler.sendPacket(player, NMS16PacketPlayOutEntityMetadata().also {
-                it.a(createDataSerializer {
-                    writeVarInt(entityId)
-                    writeMetadata(metadata)
-                }.toNMS() as NMS16PacketDataSerializer)
-            })
-        }
+        return packetHandler.sendPacket(player, metaHandler.createMetadataPacket(entityId, metadata))
     }
 
     override fun updateEntityAnimation(player: List<Player>, entityId: Int, animation: BukkitAnimation) {
@@ -207,13 +195,13 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
             packetHandler.sendPacket(player, NMSPacketPlayOutAnimation(createDataSerializer {
                 writeVarInt(entityId)
                 writeByte(animation.ordinal.toByte())
-            }.toNMS() as NMSPacketDataSerializer))
+            }.build() as NMSPacketDataSerializer))
         } else {
             packetHandler.sendPacket(player, NMS16PacketPlayOutAnimation().also {
                 it.a(createDataSerializer {
                     writeVarInt(entityId)
                     writeByte(animation.ordinal.toByte())
-                }.toNMS() as NMS16PacketDataSerializer)
+                }.build() as NMS16PacketDataSerializer)
             })
         }
     }
@@ -223,13 +211,13 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
             packetHandler.sendPacket(player, NMSPacketPlayOutAttachEntity(createDataSerializer {
                 writeVarInt(attached)
                 writeVarInt(holding)
-            }.toNMS() as NMSPacketDataSerializer))
+            }.build() as NMSPacketDataSerializer))
         } else {
             packetHandler.sendPacket(player, NMS16PacketPlayOutAttachEntity().also {
                 it.a(createDataSerializer {
                     writeVarInt(attached)
                     writeVarInt(holding)
-                }.toNMS() as NMS16PacketDataSerializer)
+                }.build() as NMS16PacketDataSerializer)
             })
         }
     }
@@ -239,7 +227,7 @@ class DefaultMinecraftEntityOperator : MinecraftEntityOperator {
             it.a(createDataSerializer {
                 writeVarInt(entityId)
                 writeBlockPosition(location.blockX, location.blockY, location.blockZ)
-            }.toNMS() as NMS13PacketDataSerializer)
+            }.build() as NMS13PacketDataSerializer)
         })
     }
 

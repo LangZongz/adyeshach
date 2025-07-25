@@ -33,7 +33,7 @@ interface DefaultGenericEntity : GenericEntity {
             is AdyHuman -> getName()
             is AdyTextDisplay -> getText().toPlainText()
             is EntityBase -> getCustomName().ifEmpty { entityType.name.lowercase().toReadable() }
-            else -> error("Unknown entity type.")
+            else -> error("Unsupported entity type: $this")
         }
     }
 
@@ -84,7 +84,7 @@ interface DefaultGenericEntity : GenericEntity {
 
     override fun setSneaking(sneaking: Boolean) {
         this as Metaable
-        setMetadata("sneaking", sneaking)
+        setMetadata("isCrouched", sneaking)
     }
 
     override fun setSprinting(sprinting: Boolean) {
